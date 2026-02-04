@@ -1,7 +1,6 @@
 import express from "express";
 import axios from "axios";
 import dotenv from "dotenv";
-import { OpenRouter } from "@openrouter/sdk";
 
 dotenv.config();
 
@@ -10,11 +9,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-const openrouter = new OpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY
-});
-
-/* -------- Health check -------- */
+/* -------- Health -------- */
 app.get("/", (req, res) => {
   res.send("WhatsApp bot running");
 });
@@ -32,44 +27,54 @@ app.post("/webhook", async (req, res) => {
 
     console.log("User:", userNumber, "Message:", userMessage);
 
-    /* ---- Ask AI ---- */
+    /* -------- Ask AI -------- */
     let botReply = "Sorry, something went wrong.";
 
     try {
-      const aiResponse = await openrouter.chat.send({
-        model: "deepseek/deepseek-r1-0528:free",
-        messages: [
-          { role: "user", content: userMessage }
-        ]
-      });
-
-      console.log("AI raw response:", JSON.stringify(aiResponse, null, 2));
+      const aiResponse = await axios.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        {
+          model: "deepseek/deepseek-r1-0528:free",
+          messages: [
+            { role: "user", content: userMessage }
+          ]
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json"
+          }
+        }
+      );
 
       botReply =
-        aiResponse?.choices?.[0]?.message?.content ||
-        aiResponse?.choices?.[0]?.text ||
+        aiResponse.data?.choices?.[0]?.message?.content ||
         "I didn't understand that.";
 
     } catch (aiErr) {
-      console.error("AI error:", aiErr.message);
+      console.error("AI error:", aiErr.response?.data || aiErr.message);
     }
 
     console.log("Bot reply:", botReply);
 
-    /* ---- Send reply ---- */
-    await axios.post(
-      "https://www.fast2sms.com/dev/whatsapp/send",
-      {
-        message: botReply,
-        numbers: [userNumber]
-      },
-      {
-        headers: {
-          authorization: process.env.FAST2SMS_API_KEY,
-          "Content-Type": "application/json"
+    /* -------- Send WhatsApp reply -------- */
+    try {
+      await axios.post(
+        "https://www.fast2sms.com/dev/whatsapp/send",
+        {
+          message: botReply,
+          numbers: userNumber
+        },
+        {
+          headers: {
+            authorization: process.env.FAST2SMS_API_KEY,
+            "Content-Type": "application/json"
+          }
         }
-      }
-    );
+      );
+    } catch (sendErr) {
+      console.error("Send error:", sendErr.response?.data || sendErr.message);
+    }
 
     res.sendStatus(200);
   } catch (err) {
@@ -78,7 +83,7 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-/* -------- Start server -------- */
+/* -------- Start -------- */
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
