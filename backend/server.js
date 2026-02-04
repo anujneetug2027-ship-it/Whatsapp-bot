@@ -1,6 +1,5 @@
 import express from "express";
 import dotenv from "dotenv";
-import twilio from "twilio";
 
 dotenv.config();
 
@@ -9,146 +8,145 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// Initialize Twilio client (will be null if credentials missing)
-let twilioClient = null;
-if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
-  twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-  console.log("✅ Twilio client initialized");
-} else {
-  console.log("⚠️ Twilio credentials not set - using manual mode");
-}
+// Store pending replies that need manual sending
+const pendingReplies = [];
 
 /* -------- Health check -------- */
 app.get("/", (req, res) => {
   res.json({
     status: "running",
-    service: "WhatsApp Bot",
-    twilio: !!twilioClient,
+    service: "WhatsApp Hi-Bot",
+    pendingReplies: pendingReplies.length,
     instruction: "Send 'Hi' to get 'hello' reply"
+  });
+});
+
+/* -------- List pending replies -------- */
+app.get("/pending", (req, res) => {
+  res.json({
+    count: pendingReplies.length,
+    replies: pendingReplies
+  });
+});
+
+/* -------- Clear pending replies -------- */
+app.get("/clear", (req, res) => {
+  const cleared = pendingReplies.length;
+  pendingReplies.length = 0;
+  res.json({
+    message: `Cleared ${cleared} pending replies`,
+    cleared: cleared
   });
 });
 
 /* -------- WhatsApp Webhook -------- */
 app.post("/webhook", async (req, res) => {
-  console.log("\n" + "=".repeat(50));
+  console.log("\n" + "=".repeat(60));
   console.log("📥 WHATSAPP MESSAGE RECEIVED");
+  console.log("Time:", new Date().toLocaleTimeString());
   
   try {
-    // Log the full request for debugging
-    console.log("Full request:", JSON.stringify(req.body, null, 2));
-    
     const report = req.body.whatsapp_reports?.[0];
     if (!report) {
-      console.log("⚠️ No valid message found");
+      console.log("No report found in webhook");
       return res.sendStatus(200);
     }
 
-    const userNumber = report.from; // Format: 918928417703
+    const userNumber = report.from;
     const userMessage = report.body?.trim() || "";
 
     console.log(`👤 From: ${userNumber}`);
     console.log(`💬 Message: "${userMessage}"`);
+    
+    // Log full webhook for debugging
+    console.log("Full webhook data:", JSON.stringify(req.body, null, 2));
 
     if (!userNumber || !userMessage) {
-      console.log("⚠️ Missing data");
+      console.log("Missing number or message");
       return res.sendStatus(200);
     }
 
     // Check if message contains "hi" (case-insensitive)
-    if (userMessage.toLowerCase().includes("hi")) {
-      console.log("✅ Detected 'Hi' message");
+    const lowerMessage = userMessage.toLowerCase();
+    if (lowerMessage.includes("hi") || lowerMessage.includes("hello") || lowerMessage.includes("hey")) {
+      console.log("✅ Detected greeting message!");
       
-      // Format number for Twilio: +918928417703
-      const formattedNumber = `+${userNumber}`;
+      // Add to pending replies for manual sending
+      const reply = {
+        to: userNumber,
+        message: "hello 👋",
+        receivedAt: new Date().toISOString(),
+        originalMessage: userMessage
+      };
       
-      // Try to send via Twilio
-      if (twilioClient) {
-        try {
-          console.log(`📤 Attempting to send via Twilio to: ${formattedNumber}`);
-          
-          const message = await twilioClient.messages.create({
-            body: 'hello 👋',
-            from: 'whatsapp:+14155238886', // Twilio sandbox number
-            to: `whatsapp:${formattedNumber}`
-          });
-          
-          console.log("✅ Twilio message sent successfully!");
-          console.log(`Message SID: ${message.sid}`);
-          console.log(`Status: ${message.status}`);
-          
-        } catch (twilioError) {
-          console.error("❌ Twilio error:", twilioError.message);
-          logManualInstructions(userNumber);
-        }
-      } else {
-        // Twilio not configured, show manual instructions
-        logManualInstructions(userNumber);
-      }
+      pendingReplies.push(reply);
+      
+      console.log("\n" + "=".repeat(40));
+      console.log("📝 REPLY QUEUED FOR MANUAL SENDING");
+      console.log("=".repeat(40));
+      console.log(`To: ${userNumber}`);
+      console.log(`Reply: "hello 👋"`);
+      console.log(`Time: ${new Date().toLocaleTimeString()}`);
+      console.log("\n💡 HOW TO SEND MANUALLY:");
+      console.log("1. Open WhatsApp Web/Desktop");
+      console.log(`2. Send "hello 👋" to ${userNumber}`);
+      console.log("3. Or use the Fast2SMS dashboard");
+      console.log("\n📊 View all pending: GET /pending");
+      console.log("🗑️  Clear pending: GET /clear");
+      console.log("=".repeat(40));
+      
     } else {
-      console.log("ℹ️ Message doesn't contain 'Hi', ignoring");
+      console.log("ℹ️ Not a greeting message, ignoring");
     }
 
-    console.log("=".repeat(50));
+    console.log("=".repeat(60) + "\n");
     res.sendStatus(200);
     
   } catch (error) {
-    console.error("💥 Unexpected error:", error.message);
+    console.error("💥 Error in webhook:", error.message);
     res.sendStatus(200);
   }
 });
 
-/* -------- Helper function -------- */
-function logManualInstructions(number) {
-  console.log("\n📝 MANUAL REPLY REQUIRED:");
-  console.log("=".repeat(30));
-  console.log(`📱 Send "hello" to this number:`);
-  console.log(`   ${number}`);
-  console.log("\n💡 Quick ways to send:");
-  console.log("1. Open WhatsApp Web/Desktop");
-  console.log("2. Search for this number");
-  console.log("3. Send 'hello'");
-  console.log("\n🔧 Or configure Twilio:");
-  console.log("1. Sign up at twilio.com (free trial)");
-  console.log("2. Get WhatsApp Sandbox number");
-  console.log("3. Add credentials to .env file");
-  console.log("=".repeat(30));
-}
-
-/* -------- Test endpoint -------- */
-app.get("/test-send", async (req, res) => {
+/* -------- Manual reply endpoint -------- */
+app.post("/manual-reply", (req, res) => {
   try {
-    const testNumber = "+918928417703"; // Your number with +
+    const { number, message } = req.body;
     
-    if (!twilioClient) {
+    if (!number || !message) {
       return res.status(400).json({
-        success: false,
-        message: "Twilio not configured",
-        instructions: "Add TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN to .env"
+        error: "Number and message required",
+        example: {
+          number: "918928417703",
+          message: "hello 👋"
+        }
       });
     }
     
-    console.log(`\n🔧 TEST: Sending to ${testNumber}`);
+    const reply = {
+      to: number,
+      message: message,
+      addedAt: new Date().toISOString(),
+      source: "manual"
+    };
     
-    const message = await twilioClient.messages.create({
-      body: 'Test hello from bot! 🤖',
-      from: 'whatsapp:+14155238886',
-      to: `whatsapp:${testNumber}`
-    });
+    pendingReplies.push(reply);
+    
+    console.log(`\n📝 MANUAL REPLY ADDED:`);
+    console.log(`To: ${number}`);
+    console.log(`Message: ${message}`);
     
     res.json({
       success: true,
-      message: "Test sent via Twilio",
-      sid: message.sid,
-      status: message.status,
-      to: testNumber
+      message: "Reply queued for manual sending",
+      reply: reply,
+      totalPending: pendingReplies.length
     });
     
   } catch (error) {
-    console.error("Test error:", error.message);
     res.status(500).json({
       success: false,
-      error: error.message,
-      code: error.code
+      error: error.message
     });
   }
 });
@@ -157,38 +155,28 @@ app.get("/test-send", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`
   =============================================
-  🤖 WHATSAPP AUTO-REPLY BOT
+  🤖 WHATSAPP HI-BOT
   📍 Port: ${PORT}
   
-  ${twilioClient ? '✅ TWILIO CONFIGURED' : '⚠️ MANUAL MODE'}
+  ✅ Ready to receive messages!
   
-  🔧 Endpoints:
-     GET  /            - Health check
-     POST /webhook     - WhatsApp webhook
-     GET  /test-send   - Test Twilio send
+  🔧 ENDPOINTS:
+     GET  /               - Health check
+     GET  /pending        - View pending replies
+     GET  /clear          - Clear pending replies
+     POST /webhook        - WhatsApp webhook
+     POST /manual-reply   - Add manual reply
   
-  📱 How to use:
+  📱 HOW IT WORKS:
   1. User sends "Hi" to your WhatsApp
-  2. Bot replies with "hello"
+  2. Bot logs the reply needed
+  3. You manually send "hello 👋"
   
-  ⚡ Setup Twilio (Recommended):
-  1. Go to twilio.com/try-twilio
-  2. Sign up for free account
-  3. Get $15 free credit
-  4. Enable WhatsApp Sandbox
-  5. Add to .env file:
-     TWILIO_ACCOUNT_SID=your_sid
-     TWILIO_AUTH_TOKEN=your_token
+  💡 MANUAL SENDING:
+  1. Check /pending endpoint
+  2. Open WhatsApp Web
+  3. Send reply to shown number
   
   =============================================
   `);
-  
-  if (!twilioClient) {
-    console.log("\n📋 .env FILE TEMPLATE:");
-    console.log(`
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=your_auth_token_here
-PORT=3000
-    `);
-  }
 });
