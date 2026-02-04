@@ -10,52 +10,53 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-/* ---------- OpenRouter Setup ---------- */
 const openrouter = new OpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY
 });
 
-/* ---------- Health Route ---------- */
+/* -------- Health check -------- */
 app.get("/", (req, res) => {
   res.send("WhatsApp bot running");
 });
 
-/* ---------- WhatsApp Webhook ---------- */
+/* -------- Webhook -------- */
 app.post("/webhook", async (req, res) => {
   try {
     console.log("Incoming:", JSON.stringify(req.body, null, 2));
 
-    // Fast2SMS simplified payload
     const report = req.body.whatsapp_reports?.[0];
     if (!report) return res.sendStatus(200);
 
     const userNumber = report.from;
     const userMessage = report.body;
 
-    if (!userNumber || !userMessage) {
-      return res.sendStatus(200);
-    }
-
     console.log("User:", userNumber, "Message:", userMessage);
 
-    /* ---------- Ask AI ---------- */
-    const aiResponse = await openrouter.chat.send({
-      model: "deepseek/deepseek-r1-0528:free",
-      messages: [
-        {
-          role: "user",
-          content: userMessage
-        }
-      ]
-    });
+    /* ---- Ask AI ---- */
+    let botReply = "Sorry, something went wrong.";
 
-    const botReply =
-      aiResponse.choices?.[0]?.message?.content ||
-      "Sorry, I didn't understand.";
+    try {
+      const aiResponse = await openrouter.chat.send({
+        model: "deepseek/deepseek-r1-0528:free",
+        messages: [
+          { role: "user", content: userMessage }
+        ]
+      });
+
+      console.log("AI raw response:", JSON.stringify(aiResponse, null, 2));
+
+      botReply =
+        aiResponse?.choices?.[0]?.message?.content ||
+        aiResponse?.choices?.[0]?.text ||
+        "I didn't understand that.";
+
+    } catch (aiErr) {
+      console.error("AI error:", aiErr.message);
+    }
 
     console.log("Bot reply:", botReply);
 
-    /* ---------- Send reply via Fast2SMS ---------- */
+    /* ---- Send reply ---- */
     await axios.post(
       "https://www.fast2sms.com/dev/whatsapp/send",
       {
@@ -72,12 +73,12 @@ app.post("/webhook", async (req, res) => {
 
     res.sendStatus(200);
   } catch (err) {
-    console.error("Webhook error:", err.response?.data || err.message);
+    console.error("Webhook error:", err.message);
     res.sendStatus(200);
   }
 });
 
-/* ---------- Start Server ---------- */
+/* -------- Start server -------- */
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
