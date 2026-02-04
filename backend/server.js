@@ -9,12 +9,12 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-/* -------- Health -------- */
+/* -------- Health check -------- */
 app.get("/", (req, res) => {
   res.send("WhatsApp bot running");
 });
 
-/* -------- Webhook -------- */
+/* -------- WhatsApp Webhook -------- */
 app.post("/webhook", async (req, res) => {
   try {
     console.log("Incoming:", JSON.stringify(req.body, null, 2));
@@ -24,6 +24,10 @@ app.post("/webhook", async (req, res) => {
 
     const userNumber = report.from;
     const userMessage = report.body;
+
+    if (!userNumber || !userMessage) {
+      return res.sendStatus(200);
+    }
 
     console.log("User:", userNumber, "Message:", userMessage);
 
@@ -57,11 +61,12 @@ app.post("/webhook", async (req, res) => {
 
     console.log("Bot reply:", botReply);
 
-    /* -------- Send WhatsApp reply -------- */
+    /* -------- Send reply via Fast2SMS -------- */
     try {
       await axios.post(
         "https://www.fast2sms.com/dev/whatsapp/send",
         {
+          route: "whatsapp",
           message: botReply,
           numbers: userNumber
         },
@@ -83,7 +88,7 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-/* -------- Start -------- */
+/* -------- Start server -------- */
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
